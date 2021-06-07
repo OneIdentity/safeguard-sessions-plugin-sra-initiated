@@ -1,4 +1,5 @@
 [packages]
+requests_toolbelt = "*"
 
 [dev-packages]
 oneidentity-safeguard-sessions-plugin-sdk = "*"
