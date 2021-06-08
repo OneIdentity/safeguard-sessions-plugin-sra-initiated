@@ -10,6 +10,7 @@ from ipaddress import ip_address, ip_network
 
 from .vault import Vault, VaultError, AccessRequestDenied
 
+from safeguard.sessions.plugin.plugin_base import cookie_property
 from safeguard.sessions.plugin import AAPlugin, AAResponse
 
 PLUGIN_SECTION = 'plugin'
@@ -29,14 +30,37 @@ class Plugin(AAPlugin):
     def _extract_mfa_password(self):
         return 'can pass'
 
+    @cookie_property
+    def spp_username(self):
+        if self.plugin_configuration.getboolean(PLUGIN_SECTION, 'split_username', True):
+            (username, domain) = self.split_username()
+            return username
+        return self.username
+
+    @cookie_property
+    def spp_auth_provider(self):
+        provider = self.plugin_configuration.get(PLUGIN_SECTION, 'spp_auth_provider')
+        if provider:
+            return provider
+        new_domain = self.plugin_configuration.get(PLUGIN_SECTION, 'replace_domain')
+        if new_domain:
+            return new_domain
+        (username, domain) = self.split_username()
+        return domain
+
+    def split_username(self):
+        if '@' not in self.username:
+            return self.username, ""
+        username_r = self.username[::-1]
+        atidx = len(username_r) - username_r.find('@')
+        return self.username[:atidx - 1], self.username[atidx:]
+
     def do_authenticate(self):
         self.session_cookie.setdefault("SessionId", self.connection.session_id)
 
         if self.username:
             if self.is_client_excluded():
                 return AAResponse.deny('Client network not allowed')
-
-            self.replace_domain()
 
             return AAResponse.accept('Accepting authentication by default')
 
@@ -72,10 +96,8 @@ class Plugin(AAPlugin):
         if "token" not in key_value_pairs:
             print("Start SPS initiated workflow")
             try:
-                auth_provider = self.get_auth_provider()
-
-                self.session_cookie["AuthUser"] = self.username
-                self.session_cookie["AuthProvider"] = auth_provider
+                self.session_cookie["AuthUser"] = self.spp_username
+                self.session_cookie["AuthProvider"] = self.spp_auth_provider
 
                 vault = Vault.connect_joined_vault()
                 self.session_cookie["VaultAddress"] = vault.address
@@ -83,8 +105,8 @@ class Plugin(AAPlugin):
                 assets = vault.get_assets_by_hostname_or_address(
                     server_hostname=self.connection.server_hostname,
                     server_ip=self.connection.server_ip,
-                    auth_provider=auth_provider,
-                    auth_user=self.username,
+                    auth_provider=self.spp_auth_provider,
+                    auth_user=self.spp_username,
                 )
 
                 if len(assets) != 1:
@@ -100,8 +122,8 @@ class Plugin(AAPlugin):
                     asset_id=asset_id,
                     account_name=self.connection.server_username,
                     account_domain=self.connection.server_domain,
-                    auth_provider=auth_provider,
-                    auth_user=self.username,
+                    auth_provider=self.spp_auth_provider,
+                    auth_user=self.spp_username,
                 )
                 if len(accounts) != 1:
                     print(
@@ -114,8 +136,8 @@ class Plugin(AAPlugin):
                 access_request = vault.create_access_request(
                     asset_id=asset_id,
                     account_id=account_id,
-                    auth_provider=auth_provider,
-                    auth_user=self.username,
+                    auth_provider=self.spp_auth_provider,
+                    auth_user=self.spp_username,
                     protocol=self.connection.protocol,
                 )
                 self.session_cookie["WorkflowStatus"] = "access-requested"
@@ -125,19 +147,19 @@ class Plugin(AAPlugin):
                 state_file.save(
                     {
                         "AccessRequestId": access_request["Id"],
-                        "AuthProvider": auth_provider,
-                        "AuthUser": self.username,
+                        "AuthProvider": self.spp_auth_provider,
+                        "AuthUser": self.spp_username,
                         "VaultAddress": vault.address,
                     }
                 )
 
                 vault.poll_access_request(
-                    access_request, auth_provider=auth_provider, auth_user=self.username
+                    access_request, auth_provider=self.spp_auth_provider, auth_user=self.spp_username
                 )
                 state_file.delete()
 
                 token = vault.get_session_token(
-                    access_request, auth_provider=auth_provider, auth_user=self.username
+                    access_request, auth_provider=self.spp_auth_provider, auth_user=self.spp_username
                 )
                 self.session_cookie["WorkflowStatus"] = "session-initialized"
 
@@ -199,22 +221,6 @@ class Plugin(AAPlugin):
             if client_address in network:
                 return True
         return False
-
-    def replace_domain(self):
-        new_domain = self.plugin_configuration.get(PLUGIN_SECTION, 'replace_domain')
-        if new_domain and '@' in self.username:
-            username = self.username[::-1]
-            username = username[username.find('@'):]
-            self.username = username[::-1] + new_domain
-
-    def get_auth_provider(self):
-        provider = self.plugin_configuration.get(PLUGIN_SECTION, 'spp_auth_provider')
-        if provider:
-            return provider
-        if '@' in self.username:
-            username_r = self.username[::-1]
-            domain_r = username_r[:username_r.find('@')]
-            return domain_r[::-1]
 
     def do_session_ended(self):
         try:
