@@ -4,16 +4,15 @@
 # All Rights Reserved.
 #
 
-import re
 import os
 import json
+from ipaddress import ip_address, ip_network
 
-from vault import Vault, VaultError, AccessRequestDenied
+from .vault import Vault, VaultError, AccessRequestDenied
 
-# box_configuration has to be imported before box_config to avoid circular import
-# pylint: disable=unused-import
-from safeguard.sessions.plugin.box_configuration import BoxConfiguration
-from safeguard.sessions.plugin_impl.box_config import BoxConfig
+from safeguard.sessions.plugin import AAPlugin, AAResponse
+
+PLUGIN_SECTION = 'plugin'
 
 # Authentication-Authorization plugins for SCB are installed to /opt/scb/var/plugins/aa/.
 # It is a lot easier just to SSH into SCB to test your plugin rather than uploading through
@@ -23,30 +22,25 @@ from safeguard.sessions.plugin_impl.box_config import BoxConfig
 # xml and config lock files in that directory.
 
 # The logging goes to /var/log/messages-<DAY>, where <DAY> is the three character represent-
-# ation of the day of the week, e.g. /var/log/messages-Fri.
+# action of the day of the week, e.g. /var/log/messages-Fri.
 
 
-class Plugin(object):
-    def authenticate(
-        self,
-        session_id,
-        session_cookie,
-        cookie,
-        protocol,
-        connection_name,
-        client_ip,
-        client_port,
-        key_value_pairs,
-        gateway_user,
-    ):
-        session_cookie.setdefault("SessionId", session_id)
-        if gateway_user:
-            return {
-                "verdict": "ACCEPT",
-                "cookie": cookie,
-                "session_cookie": session_cookie,
-            }
+class Plugin(AAPlugin):
+    def _extract_mfa_password(self):
+        return 'can pass'
 
+    def do_authenticate(self):
+        self.session_cookie.setdefault("SessionId", self.connection.session_id)
+
+        if self.username:
+            if self.is_client_excluded():
+                return AAResponse.deny('Client network not allowed')
+
+            self.replace_domain()
+
+            return AAResponse.accept('Accepting authentication by default')
+
+        key_value_pairs = self.connection.key_value_pairs
         if "token" not in key_value_pairs:
             print("Without token authentication is denied")
             return {"verdict": "DENY"}
@@ -59,7 +53,7 @@ class Plugin(object):
 
         try:
             response = vault.authenticate_token(
-                token=key_value_pairs["token"], session_id=session_cookie["SessionId"]
+                token=key_value_pairs["token"], session_id=self.session_cookie["SessionId"]
             )
 
         except VaultError as error:
@@ -67,77 +61,53 @@ class Plugin(object):
 
             return {"verdict": "DENY"}
 
-        session_cookie["SessionKey"] = response["SessionKey"]
-        session_cookie["VaultAddress"] = vault.address
-        return {
-            "verdict": "ACCEPT",
-            "gateway_user": response["User"],
-            "gateway_groups": response["Groups"],
-            "cookie": cookie,
-            "session_cookie": session_cookie,
-        }
+        self.session_cookie["SessionKey"] = response["SessionKey"]
+        self.session_cookie["VaultAddress"] = vault.address
+        return AAResponse.accept().with_gateway_user(response["User"], response["Groups"])
 
     # SPS initiated code path should be extracted. pylint: disable=too-many-return-statements
-    def authorize(
-        self,
-        session_id,
-        session_cookie,
-        cookie,
-        protocol,
-        connection_name,
-        client_ip,
-        client_port,
-        gateway_user,
-        gateway_domain,
-        server_ip,
-        server_port,
-        server_hostname,
-        server_username,
-        server_domain,
-        key_value_pairs,
-    ):
-        session_cookie["WorkflowStatus"] = "token-granted"
-
+    def do_authorize(self):
+        self.session_cookie["WorkflowStatus"] = "token-granted"
+        key_value_pairs = self.connection.key_value_pairs
         if "token" not in key_value_pairs:
             print("Start SPS initiated workflow")
             try:
-                auth_provider = get_auth_provider(
-                    protocol, connection_name, gateway_domain
-                )
-                session_cookie["AuthUser"] = gateway_user
-                session_cookie["AuthProvider"] = auth_provider
+                auth_provider = self.get_auth_provider()
+
+                self.session_cookie["AuthUser"] = self.username
+                self.session_cookie["AuthProvider"] = auth_provider
 
                 vault = Vault.connect_joined_vault()
-                session_cookie["VaultAddress"] = vault.address
+                self.session_cookie["VaultAddress"] = vault.address
 
                 assets = vault.get_assets_by_hostname_or_address(
-                    server_hostname=server_hostname,
-                    server_ip=server_ip,
+                    server_hostname=self.connection.server_hostname,
+                    server_ip=self.connection.server_ip,
                     auth_provider=auth_provider,
-                    auth_user=gateway_user,
+                    auth_user=self.username,
                 )
 
                 if len(assets) != 1:
                     print(
-                        f"No unique asset found; address='{server_ip}', hostname='{server_hostname}'"
+                        f"No unique asset found; address='{self.connection.server_ip}', hostname='{self.connection.server_hostname}'"
                     )
-                    return self._deny(cookie, session_cookie)
+                    return AAResponse.deny()
 
                 asset_id = assets[0]["Id"]
                 asset_network_address = assets[0]["NetworkAddress"]
 
                 accounts = vault.get_accounts_in_scope_for_asset_by_name(
                     asset_id=asset_id,
-                    account_name=server_username,
-                    account_domain=server_domain,
+                    account_name=self.connection.server_username,
+                    account_domain=self.connection.server_domain,
                     auth_provider=auth_provider,
-                    auth_user=gateway_user,
+                    auth_user=self.username,
                 )
                 if len(accounts) != 1:
                     print(
-                        f"No unique account found; asset_id='{asset_id}', username='{server_username}', domain='{server_domain}'"
+                        f"No unique account found; asset_id='{asset_id}', username='{self.connection.server_username}', domain='{self.connection.server_domain}'"
                     )
-                    return self._deny(cookie, session_cookie)
+                    return AAResponse.deny()
 
                 account_id = accounts[0]["Id"]
 
@@ -145,50 +115,50 @@ class Plugin(object):
                     asset_id=asset_id,
                     account_id=account_id,
                     auth_provider=auth_provider,
-                    auth_user=gateway_user,
-                    protocol=protocol,
+                    auth_user=self.username,
+                    protocol=self.connection.protocol,
                 )
-                session_cookie["WorkflowStatus"] = "access-requested"
-                session_cookie["AccessRequestId"] = access_request["Id"]
+                self.session_cookie["WorkflowStatus"] = "access-requested"
+                self.session_cookie["AccessRequestId"] = access_request["Id"]
 
-                state_file = OpenAccessRequestStateFile(session_cookie["SessionId"])
+                state_file = OpenAccessRequestStateFile(self.session_cookie["SessionId"])
                 state_file.save(
                     {
                         "AccessRequestId": access_request["Id"],
                         "AuthProvider": auth_provider,
-                        "AuthUser": gateway_user,
+                        "AuthUser": self.username,
                         "VaultAddress": vault.address,
                     }
                 )
 
                 vault.poll_access_request(
-                    access_request, auth_provider=auth_provider, auth_user=gateway_user
+                    access_request, auth_provider=auth_provider, auth_user=self.username
                 )
                 state_file.delete()
 
                 token = vault.get_session_token(
-                    access_request, auth_provider=auth_provider, auth_user=gateway_user
+                    access_request, auth_provider=auth_provider, auth_user=self.username
                 )
-                session_cookie["WorkflowStatus"] = "session-initialized"
+                self.session_cookie["WorkflowStatus"] = "session-initialized"
 
                 response = vault.authenticate_token(
-                    token=token, session_id=session_cookie["SessionId"]
+                    token=token, session_id=self.session_cookie["SessionId"]
                 )
-                session_cookie["SessionKey"] = response["SessionKey"]
-                session_cookie["token"] = token
+                self.session_cookie["SessionKey"] = response["SessionKey"]
+                self.session_cookie["token"] = token
 
-            except (VaultError, BoxConfigurationError) as error:
+            except VaultError as error:
                 print(error)
 
-                return self._deny(cookie, session_cookie)
+                return AAResponse.deny()
 
             except AccessRequestDenied as error:
                 state_file.delete()
 
                 print(error)
-                session_cookie["WorkflowStatus"] = "access-denied"
+                self.session_cookie["WorkflowStatus"] = "access-denied"
 
-                return self._deny(cookie, session_cookie)
+                return AAResponse.deny()
 
         elif "vaultaddress" not in key_value_pairs:
             print("Without vault address authorization is denied")
@@ -197,21 +167,21 @@ class Plugin(object):
         else:
             vault = Vault.connect_vault(key_value_pairs["vaultaddress"])
             token = key_value_pairs["token"]
-            session_cookie["token"] = token
+            self.session_cookie["token"] = token
 
-            asset_network_address = server_hostname or server_ip
+            asset_network_address = self.connection.server_hostname or self.connection.server_ip
 
         try:
             vault.authorize_session(
                 token=token,
-                session_id=session_cookie["SessionId"],
-                session_key=session_cookie["SessionKey"],
-                client_ip=client_ip,
-                client_port=client_port,
+                session_id=self.session_cookie["SessionId"],
+                session_key=self.session_cookie["SessionKey"],
+                client_ip=self.connection.client_ip,
+                client_port=self.connection.client_port,
                 server_hostname=asset_network_address,
-                server_port=server_port,
-                server_username=server_username,
-                protocol=protocol,
+                server_port=self.connection.server_port,
+                server_username=self.connection.server_username,
+                protocol=self.connection.protocol,
             )
 
         except VaultError as error:
@@ -219,19 +189,42 @@ class Plugin(object):
 
             return {"verdict": "DENY"}
 
-        return {"verdict": "ACCEPT", "session_cookie": session_cookie, "cookie": cookie}
+        return AAResponse.accept()
 
-    def _deny(self, cookie, session_cookie):
-        return {"verdict": "DENY", "session_cookie": session_cookie, "cookie": cookie}
+    def is_client_excluded(self):
+        client_address = ip_address(self.connection.client_ip)
+        exclude_networks: list = self.plugin_configuration.getlist(PLUGIN_SECTION, 'exclude_networks', '')
+        for item in filter(lambda x: x, exclude_networks):
+            network = ip_network(item)
+            if client_address in network:
+                return True
+        return False
 
-    def session_ended(self, session_id, session_cookie, cookie):
+    def replace_domain(self):
+        new_domain = self.plugin_configuration.get(PLUGIN_SECTION, 'replace_domain')
+        if new_domain and '@' in self.username:
+            username = self.username[::-1]
+            username = username[username.find('@'):]
+            self.username = username[::-1] + new_domain
+
+    def get_auth_provider(self):
+        provider = self.plugin_configuration.get(PLUGIN_SECTION, 'spp_auth_provider')
+        if provider:
+            return provider
+        if '@' in self.username:
+            username_r = self.username[::-1]
+            domain_r = username_r[:username_r.find('@')]
+            return domain_r[::-1]
+        return 'Local'
+
+    def do_session_ended(self):
         try:
-            session_id = session_cookie["SessionId"]
+            session_id = self.session_cookie["SessionId"]
         except KeyError:
             return
 
-        workflow_status = session_cookie.get("WorkflowStatus", "zorp-timeout")
-        credential_status = session_cookie.get("CredentialStatus")
+        workflow_status = self.session_cookie.get("WorkflowStatus", "zorp-timeout")
+        credential_status = self.session_cookie.get("CredentialStatus")
 
         # In case of RDP multiple proxy session belongs to the user's RDP session.
         # The access request can be closed only if the credentails are fetched.
@@ -245,7 +238,7 @@ class Plugin(object):
         if workflow_status == "zorp-timeout":
             try:
                 state_file = OpenAccessRequestStateFile(session_id)
-                session_cookie = state_file.get()
+                self.session_cookie = state_file.get()
 
             except FileNotFoundError as error:
                 print(error)
@@ -254,33 +247,33 @@ class Plugin(object):
             finally:
                 state_file.delete()
 
-            vault_address = session_cookie["VaultAddress"]
+            vault_address = self.session_cookie["VaultAddress"]
 
         else:
-            vault_address = session_cookie["VaultAddress"]
+            vault_address = self.session_cookie["VaultAddress"]
 
         vault = Vault.connect_vault(vault_address)
 
         try:
             if workflow_status in {"access-requested", "zorp-timeout"}:
                 vault.cancel_access_request(
-                    access_request_id=session_cookie["AccessRequestId"],
-                    auth_provider=session_cookie["AuthProvider"],
-                    auth_user=session_cookie["AuthUser"],
+                    access_request_id=self.session_cookie["AccessRequestId"],
+                    auth_provider=self.session_cookie["AuthProvider"],
+                    auth_user=self.session_cookie["AuthUser"],
                 )
 
             elif workflow_status == "session-initialized":
                 vault.check_in_access_request(
-                    access_request_id=session_cookie["AccessRequestId"],
-                    auth_provider=session_cookie["AuthProvider"],
-                    auth_user=session_cookie["AuthUser"],
+                    access_request_id=self.session_cookie["AccessRequestId"],
+                    auth_provider=self.session_cookie["AuthProvider"],
+                    auth_user=self.session_cookie["AuthUser"],
                 )
 
-            if "SessionKey" in session_cookie:
+            if "SessionKey" in self.session_cookie:
                 vault.close_authentication(
                     session_id=session_id,
-                    session_key=session_cookie["SessionKey"],
-                    token=session_cookie.get("token", "token"),
+                    session_key=self.session_cookie["SessionKey"],
+                    token=self.session_cookie.get("token", "token"),
                 )
 
             else:
@@ -293,64 +286,6 @@ class Plugin(object):
             print(error)
 
         return
-
-
-def get_auth_provider(protocol, connection_name, gateway_domain):
-    box_config = BoxConfig()
-
-    connections_url = f"/api/configuration/{protocol}/connections"
-    print(f"GET request to localrest; url={connections_url}")
-    connection_policies = box_config.query(connections_url)["items"]
-
-    for connection_policy in connection_policies:
-        if connection_policy["body"]["name"] == connection_name:
-            break
-    else:
-        raise BoxConfigurationError(
-            f"Connection policy not found; protocol={protocol}, name={connection_name}"
-        )
-
-    if protocol == "rdp":
-        rdg = connection_policy["body"]["remote_desktop_gateway"]
-        if not rdg["enabled"]:
-            raise BoxConfigurationError(
-                f"No Remote Desktop Gateway is configured for connection;"
-                f"connection_name={connection_name}"
-            )
-        if rdg["local_authentication"]["selection"] == "local_user_database":
-            return "local"
-        else:
-            return gateway_domain
-
-    else:
-        policies = connection_policy["body"]["policies"]
-        auth_policy_ref = policies["authentication_policy"]["meta"]["href"]
-
-        print(f"GET request to localrest; url={auth_policy_ref}")
-        auth_policy = box_config.query(auth_policy_ref)
-        auth_backend = auth_policy["body"]["backend"]["selection"]
-
-        if auth_backend == "local":
-            return "local"
-
-        elif auth_backend == "ldap":
-            ldap_server_ref = policies["ldap_server"]["meta"]["href"]
-            print(f"GET request to localrest; url={ldap_server_ref}")
-            ldap_server = box_config.query(ldap_server_ref)
-
-            return conv_bind_dn_to_auth_domain(ldap_server["body"]["user_base_dn"])
-
-
-def conv_bind_dn_to_auth_domain(bind_dn):
-    auth_domain = ".".join(re.findall("dc=([^,]+)", bind_dn, re.IGNORECASE))
-    print(
-        f"Bind dn converted to auth domain; bind_dn={bind_dn}, auth_domain={auth_domain}"
-    )
-    return auth_domain
-
-
-class BoxConfigurationError(Exception):
-    pass
 
 
 class OpenAccessRequestStateFile:
