@@ -215,7 +215,6 @@ class Plugin(AAPlugin):
             username_r = self.username[::-1]
             domain_r = username_r[:username_r.find('@')]
             return domain_r[::-1]
-        return 'Local'
 
     def do_session_ended(self):
         try:
