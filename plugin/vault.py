@@ -203,7 +203,7 @@ class Vault:
         return self._get(url, parameters=request, auth="SPSInteractive")
 
     def create_access_request(
-        self, *, asset_id, account_id, auth_provider, auth_user, protocol
+        self, *, asset_id, account_id, auth_provider, auth_user, protocol, reason_comment
     ):
         print("Create access request")
 
@@ -217,6 +217,7 @@ class Vault:
             "ForProvider": auth_provider,
             "AccessRequestType": protocol,
             "ReasonCode": "SPS",
+            "ReasonComment": reason_comment
         }
 
         return self._post(url, post_data=access_request, auth="SPSInteractive")

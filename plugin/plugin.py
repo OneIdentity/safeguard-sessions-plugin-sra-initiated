@@ -30,30 +30,31 @@ class Plugin(AAPlugin):
     def _extract_mfa_password(self):
         return 'can pass'
 
+    def _extract_username(self):
+        username = super()._extract_username()
+        self.original_username = username
+        new_domain = self.plugin_configuration.get(PLUGIN_SECTION, 'replace_domain')
+        if new_domain:
+            (username, domain) = split_username(username)
+            return username + '@' + new_domain
+        return username
+
+    @cookie_property
+    def original_username(self):
+        pass
+
     @cookie_property
     def spp_username(self):
-        if self.plugin_configuration.getboolean(PLUGIN_SECTION, 'split_username', True):
-            (username, domain) = self.split_username()
-            return username
-        return self.username
+        (username, domain) = split_username(self.username)
+        return username
 
     @cookie_property
     def spp_auth_provider(self):
         provider = self.plugin_configuration.get(PLUGIN_SECTION, 'spp_auth_provider')
         if provider:
             return provider
-        new_domain = self.plugin_configuration.get(PLUGIN_SECTION, 'replace_domain')
-        if new_domain:
-            return new_domain
-        (username, domain) = self.split_username()
-        return domain
-
-    def split_username(self):
-        if '@' not in self.username:
-            return self.username, ""
-        username_r = self.username[::-1]
-        atidx = len(username_r) - username_r.find('@')
-        return self.username[:atidx - 1], self.username[atidx:]
+        (username, domain) = split_username(self.username)
+        return domain if domain else 'Local'
 
     def do_authenticate(self):
         self.session_cookie.setdefault("SessionId", self.connection.session_id)
@@ -139,6 +140,7 @@ class Plugin(AAPlugin):
                     auth_provider=self.spp_auth_provider,
                     auth_user=self.spp_username,
                     protocol=self.connection.protocol,
+                    reason_comment=self.session_comment()
                 )
                 self.session_cookie["WorkflowStatus"] = "access-requested"
                 self.session_cookie["AccessRequestId"] = access_request["Id"]
@@ -211,7 +213,7 @@ class Plugin(AAPlugin):
 
             return {"verdict": "DENY"}
 
-        return AAResponse.accept()
+        return AAResponse.accept(self.session_comment())
 
     def is_client_excluded(self):
         client_address = ip_address(self.connection.client_ip)
@@ -221,6 +223,9 @@ class Plugin(AAPlugin):
             if client_address in network:
                 return True
         return False
+
+    def session_comment(self):
+        return 'SRA,gateway_user_external_upn={}'.format(self.original_username)
 
     def do_session_ended(self):
         try:
@@ -312,3 +317,11 @@ class OpenAccessRequestStateFile:
             os.remove(os.path.join(self.path))
         except FileNotFoundError:
             pass
+
+
+def split_username(username):
+    if '@' not in username:
+        return username, None
+    username_r = username[::-1]
+    atidx = len(username_r) - username_r.find('@')
+    return username[:atidx - 1], username[atidx:]
