@@ -6,4 +6,4 @@ api: 1.6
 entry_point: main.py
 author_name: One Identity Safeguard Remote Access
 author_email: QDL.QBU-OI.RD.Safeguard.Integration@oneidentity.com
-
+scb_max_version: 6.13.0~
