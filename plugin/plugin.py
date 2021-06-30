@@ -56,6 +56,12 @@ class Plugin(AAPlugin):
         (username, domain) = split_username(self.username)
         return domain if domain else 'Local'
 
+    def set_https_proxy(self):
+        if self.plugin_configuration.getboolean('plugin', 'use_https_proxy', False):
+            super().set_https_proxy()
+        else:
+            self.logger.info("HTTPS proxy server configuration ignored, communicating directly")
+
     def do_authenticate(self):
         self.session_cookie.setdefault("SessionId", self.connection.session_id)
 
