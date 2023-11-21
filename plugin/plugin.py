@@ -98,6 +98,7 @@ class Plugin(AAPlugin):
 
     # SPS initiated code path should be extracted. pylint: disable=too-many-return-statements
     def do_authorize(self):
+        self.session_cookie.setdefault("SessionId", self.connection.session_id)
         self.session_cookie["WorkflowStatus"] = "token-granted"
         key_value_pairs = self.connection.key_value_pairs
         if "token" not in key_value_pairs:
