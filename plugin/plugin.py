@@ -47,7 +47,7 @@ class Plugin(AAPlugin):
     @cookie_property
     def spp_username(self):
         (username, domain) = split_username(self.username)
-         username = (UserMappingExplicit.map_username(username, self.plugin_configuration, section="usermapping source=explicit") or username )
+        username = (UserMappingExplicit.map_username(username, self.plugin_configuration, section="usermapping source=explicit") or username )
         return username
 
     @cookie_property
