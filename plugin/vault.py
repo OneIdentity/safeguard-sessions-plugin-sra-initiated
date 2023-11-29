@@ -8,10 +8,11 @@ import requests
 import time
 
 from requests_toolbelt.adapters.source import SourceAddressAdapter
-
+from safeguard.sessions.plugin import logging
 
 class Vault:
     def __init__(self, spp_ip, sps_ip):
+        self.logger = logging.get_logger(__name__)
         self._session = requests.Session()
         self._session.verify = "/etc/spp/server.crt"
         self._session.cert = ("/etc/spp/client.crt", "/etc/spp/client.key")
