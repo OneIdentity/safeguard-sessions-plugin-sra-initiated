@@ -12,6 +12,7 @@ from .vault import Vault, VaultError, AccessRequestDenied
 
 from safeguard.sessions.plugin.plugin_base import cookie_property
 from safeguard.sessions.plugin import AAPlugin, AAResponse
+from safeguard.sessions.plugin.user_mapping import UserMappingExplicit
 
 PLUGIN_SECTION = 'plugin'
 
@@ -46,6 +47,7 @@ class Plugin(AAPlugin):
     @cookie_property
     def spp_username(self):
         (username, domain) = split_username(self.username)
+         username = (UserMappingExplicit.map_username(username, self.plugin_configuration, section="usermapping source=explicit") or username )
         return username
 
     @cookie_property
@@ -73,11 +75,11 @@ class Plugin(AAPlugin):
 
         key_value_pairs = self.connection.key_value_pairs
         if "token" not in key_value_pairs:
-            print("Without token authentication is denied")
+            self.logger.info("Without token authentication is denied")
             return {"verdict": "DENY"}
 
         if "vaultaddress" not in key_value_pairs:
-            print("Without vault address authentication is denied")
+            self.logger.info("Without vault address authentication is denied")
             return {"verdict": "DENY"}
 
         vault = Vault.connect_vault(key_value_pairs["vaultaddress"])
@@ -88,7 +90,7 @@ class Plugin(AAPlugin):
             )
 
         except VaultError as error:
-            print(error)
+            self.logger.error(error)
 
             return {"verdict": "DENY"}
 
@@ -102,7 +104,7 @@ class Plugin(AAPlugin):
         self.session_cookie["WorkflowStatus"] = "token-granted"
         key_value_pairs = self.connection.key_value_pairs
         if "token" not in key_value_pairs:
-            print("Start SPS initiated workflow")
+            self.logger.info("Start SPS initiated workflow")
             try:
                 self.session_cookie["AuthUser"] = self.spp_username
                 self.session_cookie["AuthProvider"] = self.spp_auth_provider
@@ -118,7 +120,7 @@ class Plugin(AAPlugin):
                 )
 
                 if len(assets) != 1:
-                    print(
+                    self.logger.info(
                         f"No unique asset found; address='{self.connection.server_ip}', hostname='{self.connection.server_hostname}'"
                     )
                     return AAResponse.deny()
@@ -134,7 +136,7 @@ class Plugin(AAPlugin):
                     auth_user=self.spp_username,
                 )
                 if len(accounts) != 1:
-                    print(
+                    self.logger.info(
                         f"No unique account found; asset_id='{asset_id}', username='{self.connection.server_username}', domain='{self.connection.server_domain}'"
                     )
                     return AAResponse.deny()
@@ -179,20 +181,20 @@ class Plugin(AAPlugin):
                 self.session_cookie["token"] = token
 
             except VaultError as error:
-                print(error)
+                self.logger.error(error)
 
                 return AAResponse.deny()
 
             except AccessRequestDenied as error:
                 state_file.delete()
 
-                print(error)
+                self.logger.error(error)
                 self.session_cookie["WorkflowStatus"] = "access-denied"
 
                 return AAResponse.deny()
 
         elif "vaultaddress" not in key_value_pairs:
-            print("Without vault address authorization is denied")
+            self.logger.info("Without vault address authorization is denied")
             return {"verdict": "DENY"}
 
         else:
@@ -216,7 +218,7 @@ class Plugin(AAPlugin):
             )
 
         except VaultError as error:
-            print(error)
+            self.logger.error(error)
 
             return {"verdict": "DENY"}
 
@@ -258,7 +260,7 @@ class Plugin(AAPlugin):
                 self.session_cookie = state_file.get()
 
             except FileNotFoundError as error:
-                print(error)
+                self.logger.error(error)
                 return
 
             finally:
@@ -294,13 +296,13 @@ class Plugin(AAPlugin):
                 )
 
             else:
-                print(
+                self.logger.info(
                     "Session key is missing to close authentication; "
                     f"state={workflow_status}"
                 )
 
         except VaultError as error:
-            print(error)
+            self.logger.error(error)
 
         return
 
