@@ -8,10 +8,11 @@ import requests
 import time
 
 from requests_toolbelt.adapters.source import SourceAddressAdapter
-
+from safeguard.sessions.plugin import logging
 
 class Vault:
     def __init__(self, spp_ip, sps_ip):
+        self.logger = logging.get_logger(__name__)
         self._session = requests.Session()
         self._session.verify = "/etc/spp/server.crt"
         self._session.cert = ("/etc/spp/client.crt", "/etc/spp/client.key")
@@ -56,7 +57,7 @@ class Vault:
 
     def _check_connection(self):
         url = self._get_plugin_resource("Authentication")
-        print(f"Validate vault connection; url={url}")
+        self.logger.info(f"Validate vault connection; url={url}")
 
         try:
             self._session.get(url)
@@ -72,7 +73,7 @@ class Vault:
         return self.broker_url + resource
 
     def authenticate_token(self, *, token, session_id):
-        print("Authenticate token")
+        self.logger.info("Authenticate token")
 
         url = self._get_plugin_resource("Authentication")
         parameters = {"token": token, "sessionId": session_id}
@@ -80,7 +81,7 @@ class Vault:
         return self._get(url, parameters=parameters, auth="PsmPlugin")
 
     def close_authentication(self, *, session_id, session_key, token):
-        print("Close authentication")
+        self.logger.info("Close authentication")
 
         url = self._get_plugin_resource("Authentication")
         parameters = {
@@ -104,7 +105,7 @@ class Vault:
         server_username,
         protocol,
     ):
-        print("Authorize session")
+        self.logger.info("Authorize session")
 
         url = self._get_plugin_resource("Authorization")
         session_params = {
@@ -126,15 +127,15 @@ class Vault:
         parameters = {"sessionId": session_id, "sessionKey": session_key}
 
         if credential_type is not None:
-            print(f"Get credentials; type={credential_type}")
+            self.logger.info(f"Get credentials; type={credential_type}")
             parameters["credentialType"] = credential_type
         else:
-            print("Get credentials")
+            self.logger.info("Get credentials")
 
         return self._get(url, parameters=parameters, auth="PsmPlugin")
 
     def close_credentials(self, *, session_id, session_key):
-        print("Close credentials")
+        self.logger.info("Close credentials")
 
         url = self._get_plugin_resource("Credentials")
         parameters = {"sessionId": session_id, "sessionKey": session_key}
@@ -142,7 +143,7 @@ class Vault:
         return self._post(url, parameters=parameters, auth="PsmPlugin")
 
     def delete_credentials(self, *, session_id, session_key):
-        print("Notify SPP about session ended")
+        self.logger.info("Notify SPP about session ended")
 
         url = self._get_plugin_resource("Credentials")
         parameters = {"sessionId": session_id, "sessionKey": session_key}
@@ -150,7 +151,7 @@ class Vault:
         return self._delete(url, parameters=parameters, auth="PsmPlugin")
 
     def _delete(self, url, parameters=None, auth="PsmPlugin"):
-        print(
+        self.logger.info(
             f"DELETE request; url={url}, parameters={_remove_sensitive_data(parameters)}, auth={auth}"
         )
 
@@ -158,14 +159,14 @@ class Vault:
         response = self._session.delete(url, params=parameters, headers=headers)
         decoded_response = self._decode_response(response)
 
-        print(f"Response to DELETE; data={_remove_sensitive_data(decoded_response)}")
+        self.logger.info(f"Response to DELETE; data={_remove_sensitive_data(decoded_response)}")
 
         return decoded_response
 
     def get_assets_by_hostname_or_address(
         self, *, server_hostname, server_ip, auth_provider, auth_user
     ):
-        print("Get assets matching hostname or address")
+        self.logger.info("Get assets matching hostname or address")
 
         if server_hostname:
             asset_filter = f"NetworkAddress eq '{server_ip}' OR NetworkAddress ieq '{server_hostname}'"
@@ -184,7 +185,7 @@ class Vault:
     def get_accounts_in_scope_for_asset_by_name(
         self, *, asset_id, account_name, account_domain, auth_provider, auth_user
     ):
-        print(
+        self.logger.info(
             f"Requesting accounts in scope for asset {asset_id} by name {account_name} and domain {account_domain}"
         )
 
@@ -205,7 +206,7 @@ class Vault:
     def create_access_request(
         self, *, asset_id, account_id, auth_provider, auth_user, protocol, reason_comment
     ):
-        print("Create access request")
+        self.logger.info("Create access request")
 
         url = self._get_broker_resource("AccessRequests")
 
@@ -227,7 +228,7 @@ class Vault:
 
         while True:
             state = access_request.get("State", "Unknown")
-            print(f"Access Request state is {state}")
+            self.logger.info(f"Access Request state is {state}")
 
             if state == "RequestAvailable":
                 return
@@ -268,7 +269,7 @@ class Vault:
         )
 
     def check_in_access_request(self, *, access_request_id, auth_provider, auth_user):
-        print("Check in access request")
+        self.logger.info("Check in access request")
 
         url = self._get_broker_resource(f"AccessRequests/{access_request_id}/CheckIn")
         return self._post(
@@ -278,7 +279,7 @@ class Vault:
         )
 
     def cancel_access_request(self, *, access_request_id, auth_provider, auth_user):
-        print("Cancel access request")
+        self.logger.info("Cancel access request")
 
         url = self._get_broker_resource(f"AccessRequests/{access_request_id}/Cancel")
         return self._post(
@@ -288,7 +289,7 @@ class Vault:
         )
 
     def _post(self, url, parameters=None, post_data=None, auth="PsmPlugin"):
-        print(
+        self.logger.info(
             f"POST request; url={url}, parameters={_remove_sensitive_data(post_data)}, auth={auth}"
         )
 
@@ -298,12 +299,12 @@ class Vault:
         )
         decoded_response = self._decode_response(response)
 
-        print(f"Response to POST; data={_remove_sensitive_data(decoded_response)}")
+        self.logger.info(f"Response to POST; data={_remove_sensitive_data(decoded_response)}")
 
         return decoded_response
 
     def _get(self, url, parameters=None, auth="PsmPlugin"):
-        print(
+        self.logger.info(
             f"GET request; url={url}, parameters={_remove_sensitive_data(parameters)}, auth={auth}"
         )
 
@@ -311,7 +312,7 @@ class Vault:
         response = self._session.get(url, params=parameters, headers=headers)
         decoded_response = self._decode_response(response)
 
-        print(f"Response to GET; data={_remove_sensitive_data(decoded_response)}")
+        self.logger.info(f"Response to GET; data={_remove_sensitive_data(decoded_response)}")
 
         return decoded_response
 

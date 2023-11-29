@@ -1,9 +1,8 @@
 name: SPS_AA_SRA_initiated
 description: SPP-SPS join plugin for Safeguard Remote Access
-version: 1.0.0
+version: 1.1.0-sps7
 type: aa
 api: 1.6
 entry_point: main.py
 author_name: One Identity Safeguard Remote Access
 author_email: QDL.QBU-OI.RD.Safeguard.Integration@oneidentity.com
-scb_max_version: 6.13.0~
