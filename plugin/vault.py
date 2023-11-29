@@ -104,7 +104,7 @@ class Vault:
         server_username,
         protocol,
     ):
-        print("Authorize session")
+        self.logger.info("Authorize session")
 
         url = self._get_plugin_resource("Authorization")
         session_params = {
@@ -165,7 +165,7 @@ class Vault:
     def get_assets_by_hostname_or_address(
         self, *, server_hostname, server_ip, auth_provider, auth_user
     ):
-        print("Get assets matching hostname or address")
+        self.logger.info("Get assets matching hostname or address")
 
         if server_hostname:
             asset_filter = f"NetworkAddress eq '{server_ip}' OR NetworkAddress ieq '{server_hostname}'"
