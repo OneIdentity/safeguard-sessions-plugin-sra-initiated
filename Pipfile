@@ -1,10 +1,10 @@
 [packages]
 requests_toolbelt = "*"
+yarl = "*"
 
 [dev-packages]
 oneidentity-safeguard-sessions-plugin-sdk = "*"
 
 [requires]
-python_version = "3.6"
-
+python_version = "3.10"
 
