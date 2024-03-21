@@ -1,6 +1,6 @@
 #!/usr/bin/env pluginwrapper3
 #
-#   Copyright (c) 2019 One Identity
+#   Copyright (c) 2024 One Identity
 #
 # Permission is hereby granted, free of charge, to any person obtaining a copy
 # of this software and associated documentation files (the "Software"), to

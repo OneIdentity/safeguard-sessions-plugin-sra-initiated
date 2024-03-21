@@ -1,6 +1,6 @@
 #!/usr/bin/env pluginwrapper3
 #
-# Copyright (c) 2013-2021 Balabit
+# Copyright (c) 2024 One Identity
 # All Rights Reserved.
 #
 
@@ -46,6 +46,9 @@ class Plugin(AAPlugin):
     @cookie_property
     def spp_username(self):
         (username, domain) = split_username(self.username)
+        if self.spp_auth_provider.lower() == 'starling':
+            return self.username
+
         return username
 
     @cookie_property
@@ -53,6 +56,7 @@ class Plugin(AAPlugin):
         provider = self.plugin_configuration.get(PLUGIN_SECTION, 'spp_auth_provider')
         if provider:
             return provider
+
         (username, domain) = split_username(self.username)
         return domain if domain else 'Local'
 
@@ -98,6 +102,7 @@ class Plugin(AAPlugin):
 
     # SPS initiated code path should be extracted. pylint: disable=too-many-return-statements
     def do_authorize(self):
+        self.session_cookie.setdefault("SessionId", self.connection.session_id)
         self.session_cookie["WorkflowStatus"] = "token-granted"
         key_value_pairs = self.connection.key_value_pairs
         if "token" not in key_value_pairs:

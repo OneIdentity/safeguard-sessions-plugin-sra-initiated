@@ -1,5 +1,5 @@
 #
-# Copyright (c) 2013-2021 Balabit
+# Copyright (c) 2024 One Identity
 # All Rights Reserved.
 #
 
@@ -8,7 +8,6 @@ import requests
 import time
 
 from requests_toolbelt.adapters.source import SourceAddressAdapter
-
 
 class Vault:
     def __init__(self, spp_ip, sps_ip):
