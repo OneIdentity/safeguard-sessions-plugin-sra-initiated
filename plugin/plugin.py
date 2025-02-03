@@ -6,6 +6,7 @@
 
 import os
 import json
+import ldap
 from ipaddress import ip_address, ip_network
 
 from .vault import Vault, VaultError, AccessRequestDenied
@@ -27,6 +28,7 @@ PLUGIN_SECTION = 'plugin'
 
 
 class Plugin(AAPlugin):
+
     def _extract_mfa_password(self):
         return 'can pass'
 
@@ -39,6 +41,32 @@ class Plugin(AAPlugin):
             return username + '@' + new_domain
         return username
 
+    def _lookup_gateway_user_from_ldap_property(self):
+        PLUGIN_SECTION = 'ldap_property_lookup'
+        domain_controller = self.plugin_configuration.get(PLUGIN_SECTION, 'domain_controller')
+        search_base = self.plugin_configuration.get(PLUGIN_SECTION, 'search_base')
+        lookup_attribute = self.plugin_configuration.get(PLUGIN_SECTION, 'lookup_attribute')
+        bind_user = self.plugin_configuration.get(PLUGIN_SECTION, 'bind_user')
+        bind_password = self.plugin_configuration.get(PLUGIN_SECTION, 'bind_password')
+        if not all([domain_controller, lookup_attribute, search_base, bind_user, bind_password]):
+            self.logger.error("The following configuration items must be set: domain_controller, lookup_attribute, bind_user, bind_password")
+        try:
+            conn = ldap.initialize(f"ldap://{domain_controller}")
+            conn.set_option(ldap.OPT_REFERRALS, 0)
+            conn.simple_bind_s(bind_user, bind_password)
+        except ldap.SERVER_DOWN:
+            self.logger.error(f"Coud not connect to LDAP server {domain_controller}")
+            return self.connection.gateway_username
+        except ldap.INVALID_CREDENTIALS:
+            self.logger.error("Bad bind_username or bind_password")
+            return self.connection.gateway_username
+        search_result = conn.search_s(f"{search_base}", ldap.SCOPE_SUBTREE , f"({lookup_attribute}={self.connection.gateway_username})", ['samaccountname'])
+        try:
+            return str(search_result[0][1]['sAMAccountName'][0], encoding='utf-8')
+        except TypeError:
+            self.logger.error("LDAP search did not return any result.")
+            return self.connection.gateway_username
+        
     @cookie_property
     def original_username(self):
         pass
@@ -48,7 +76,8 @@ class Plugin(AAPlugin):
         (username, domain) = split_username(self.username)
         if self.spp_auth_provider.lower() == 'starling':
             return self.username
-
+        if self.plugin_configuration.getboolean(PLUGIN_SECTION,'lookup_from_ldap_property', False):
+            return self._lookup_gateway_user_from_ldap_property()
         return username
 
     @cookie_property
